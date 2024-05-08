@@ -77,8 +77,11 @@ class diffusers_model_loader:
             checkpoint_path = os.path.join(folder_paths.models_dir,'ella')
             ella_path = os.path.join(checkpoint_path, 'ella-sd1.5-tsc-t5xl.safetensors')
             if not os.path.exists(ella_path):
-                from huggingface_hub import snapshot_download
-                snapshot_download(repo_id="QQGYLab/ELLA", local_dir=checkpoint_path, local_dir_use_symlinks=False)
+                if os.path.exists('/stable-diffusion-cache/models/ella/ella-sd1.5-tsc-t5xl.safetensors'):
+                    ella_path = '/stable-diffusion-cache/models/ella/ella-sd1.5-tsc-t5xl.safetensors'
+                else:
+                    from huggingface_hub import snapshot_download
+                    snapshot_download(repo_id="QQGYLab/ELLA", local_dir=checkpoint_path, local_dir_use_symlinks=False)
             
             with (init_empty_weights() if is_accelerate_available() else nullcontext()):
                 converted_vae_config = create_vae_diffusers_config(original_config, image_size=512)
