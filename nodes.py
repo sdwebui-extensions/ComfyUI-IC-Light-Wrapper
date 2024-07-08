@@ -16,13 +16,13 @@ try:
         PNDMScheduler,
         UniPCMultistepScheduler
     )
-    from diffusers.loaders.single_file_utils import (
+    from transformers import AutoTokenizer, CLIPTextModel, CLIPTextConfig
+    from diffusers.pipelines.stable_diffusion.convert_from_ckpt import (
         convert_ldm_vae_checkpoint, 
         convert_ldm_unet_checkpoint, 
         create_vae_diffusers_config, 
-        create_unet_diffusers_config,
-        create_text_encoder_from_ldm_clip_checkpoint
-    )            
+        create_unet_diffusers_config
+    )
 except:
     raise ImportError("Diffusers version too old. Please update to 0.26.0 minimum.")
 from .scheduling_tcd import TCDScheduler
@@ -41,6 +41,50 @@ import comfy.utils
 import folder_paths
 
 script_directory = os.path.dirname(os.path.abspath(__file__))
+
+LDM_CLIP_PREFIX_TO_REMOVE = ["cond_stage_model.transformer.", "conditioner.embedders.0.transformer."]
+
+def create_text_encoder_from_ldm_clip_checkpoint(config_name, checkpoint, local_files_only=False, torch_dtype=None):
+    try:
+        config = CLIPTextConfig.from_pretrained(config_name, local_files_only=local_files_only)
+    except Exception:
+        raise ValueError(
+            f"With local_files_only set to {local_files_only}, you must first locally save the configuration in the following path: 'openai/clip-vit-large-patch14'."
+        )
+
+    ctx = init_empty_weights if is_accelerate_available() else nullcontext
+    with ctx():
+        text_model = CLIPTextModel(config)
+
+    keys = list(checkpoint.keys())
+    text_model_dict = {}
+
+    remove_prefixes = LDM_CLIP_PREFIX_TO_REMOVE
+
+    for key in keys:
+        for prefix in remove_prefixes:
+            if key.startswith(prefix):
+                diffusers_key = key.replace(prefix, "")
+                text_model_dict[diffusers_key] = checkpoint[key]
+
+    if is_accelerate_available():
+        from diffusers.models.modeling_utils import load_model_dict_into_meta
+        import re
+
+        unexpected_keys = load_model_dict_into_meta(text_model, text_model_dict, dtype=torch_dtype)
+        if text_model._keys_to_ignore_on_load_unexpected is not None:
+            for pat in text_model._keys_to_ignore_on_load_unexpected:
+                unexpected_keys = [k for k in unexpected_keys if re.search(pat, k) is None]
+    else:
+        if not (hasattr(text_model, "embeddings") and hasattr(text_model.embeddings.position_ids)):
+            text_model_dict.pop("text_model.embeddings.position_ids", None)
+
+        text_model.load_state_dict(text_model_dict)
+
+    if torch_dtype is not None:
+        text_model = text_model.to(torch_dtype)
+
+    return text_model
     
 class diffusers_model_loader:
     @classmethod
